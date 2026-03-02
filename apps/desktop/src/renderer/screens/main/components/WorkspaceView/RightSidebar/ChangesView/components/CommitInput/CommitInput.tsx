@@ -198,24 +198,16 @@ export function CommitInput({
 				tooltip: `Pull ${pullCount} commit${pullCount !== 1 ? "s" : ""}`,
 			};
 		}
-		if (hasExistingPR) {
-			return {
-				action: "open-pr",
-				label: "Open PR",
-				icon: <HiArrowTopRightOnSquare className="size-4" />,
-				handler: handleOpenPR,
-				disabled: isPending || !prUrl,
-				tooltip: "Open existing pull request",
-			};
-		}
 		if (!hasUpstream) {
 			return {
 				action: "push",
-				label: "Publish Branch",
+				label: hasExistingPR ? "Push" : "Publish Branch",
 				icon: <HiArrowUp className="size-4" />,
 				handler: handlePush,
 				disabled: isPending,
-				tooltip: "Publish branch to remote",
+				tooltip: hasExistingPR
+					? "Push branch changes"
+					: "Publish branch to remote",
 			};
 		}
 		return {
