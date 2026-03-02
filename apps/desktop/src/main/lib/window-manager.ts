@@ -15,6 +15,11 @@ interface OpenWorkspaceWindowInput {
 	paneId?: string;
 }
 
+interface OpenWindowOptions {
+	path: string;
+	query?: Record<string, string>;
+}
+
 let ipcWindowHandler: IpcWindowHandler | null = null;
 
 export function registerIpcWindowHandler(
@@ -23,11 +28,10 @@ export function registerIpcWindowHandler(
 	ipcWindowHandler = handler;
 }
 
-export function openWorkspaceWindow({
-	workspaceId,
-	tabId,
-	paneId,
-}: OpenWorkspaceWindowInput): BrowserWindow {
+function openWindowWithRoute({
+	path,
+	query,
+}: OpenWindowOptions): BrowserWindow {
 	const sourceWindow =
 		BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
 
@@ -39,10 +43,6 @@ export function openWorkspaceWindow({
 		: [undefined, undefined];
 	const windowTitle = sourceWindow?.getTitle() ?? productName;
 	const zoomLevel = sourceWindow?.webContents.getZoomLevel();
-
-	const query: Record<string, string> = {};
-	if (tabId) query.tabId = tabId;
-	if (paneId) query.paneId = paneId;
 
 	const window = createWindow({
 		id: "main",
@@ -67,8 +67,8 @@ export function openWorkspaceWindow({
 			webviewTag: true,
 			partition: "persist:superset",
 		},
-		path: `/workspace/${workspaceId}`,
-		query: Object.keys(query).length > 0 ? query : undefined,
+		path,
+		query,
 	});
 
 	if (PLATFORM.IS_MAC) {
@@ -90,4 +90,23 @@ export function openWorkspaceWindow({
 	});
 
 	return window;
+}
+
+export function openWorkspaceWindow({
+	workspaceId,
+	tabId,
+	paneId,
+}: OpenWorkspaceWindowInput): BrowserWindow {
+	const query: Record<string, string> = {};
+	if (tabId) query.tabId = tabId;
+	if (paneId) query.paneId = paneId;
+
+	return openWindowWithRoute({
+		path: `/workspace/${workspaceId}`,
+		query: Object.keys(query).length > 0 ? query : undefined,
+	});
+}
+
+export function openWorkspaceIndexWindow(): BrowserWindow {
+	return openWindowWithRoute({ path: "/workspace" });
 }

@@ -14,7 +14,6 @@ interface FileEditorContextMenuProps {
 	availableTabs: Tab[];
 	onMoveToTab: (tabId: string) => void;
 	onMoveToNewTab: () => void;
-	onPopOutToWindow?: () => void;
 }
 
 export function FileEditorContextMenu({
@@ -28,7 +27,6 @@ export function FileEditorContextMenu({
 	availableTabs,
 	onMoveToTab,
 	onMoveToNewTab,
-	onPopOutToWindow,
 }: FileEditorContextMenuProps) {
 	const getEditor = useCallback(() => editorRef.current, [editorRef]);
 
@@ -49,7 +47,6 @@ export function FileEditorContextMenu({
 				availableTabs,
 				onMoveToTab,
 				onMoveToNewTab,
-				onPopOutToWindow,
 			}}
 		>
 			{children}

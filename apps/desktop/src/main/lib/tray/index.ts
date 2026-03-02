@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { workspaces } from "@superset/local-db";
+import { settings, workspaces } from "@superset/local-db";
 import { eq } from "drizzle-orm";
 import {
 	app,
@@ -19,6 +19,10 @@ import {
 } from "main/lib/terminal";
 import { getTerminalHostClient } from "main/lib/terminal-host/client";
 import type { ListSessionsResponse } from "main/lib/terminal-host/types";
+import {
+	openWorkspaceIndexWindow,
+	openWorkspaceWindow,
+} from "main/lib/window-manager";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -114,6 +118,33 @@ function openTerminalSettings(): void {
 function openSessionInSuperset(workspaceId: string): void {
 	showWindow();
 	menuEmitter.emit("open-workspace", workspaceId);
+}
+
+function openNewWindow(): void {
+	try {
+		const appSettings = localDb
+			.select({ lastActiveWorkspaceId: settings.lastActiveWorkspaceId })
+			.from(settings)
+			.get();
+		const lastActiveWorkspaceId = appSettings?.lastActiveWorkspaceId;
+
+		if (lastActiveWorkspaceId) {
+			const workspace = localDb
+				.select({ id: workspaces.id })
+				.from(workspaces)
+				.where(eq(workspaces.id, lastActiveWorkspaceId))
+				.get();
+
+			if (workspace?.id) {
+				openWorkspaceWindow({ workspaceId: workspace.id });
+				return;
+			}
+		}
+	} catch (error) {
+		console.warn("[Tray] Failed to resolve last active workspace:", error);
+	}
+
+	openWorkspaceIndexWindow();
 }
 
 async function killSession(paneId: string): Promise<void> {
@@ -261,6 +292,10 @@ async function updateTrayMenu(): Promise<void> {
 		{
 			label: "Open Superset",
 			click: showWindow,
+		},
+		{
+			label: "New Window",
+			click: openNewWindow,
 		},
 		{
 			label: "Settings",
