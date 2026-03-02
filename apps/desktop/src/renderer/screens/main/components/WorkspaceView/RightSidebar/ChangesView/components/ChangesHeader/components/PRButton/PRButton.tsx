@@ -12,7 +12,7 @@ import { LuGitPullRequest, LuLoaderCircle } from "react-icons/lu";
 import { VscGitMerge } from "react-icons/vsc";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import { PRIcon } from "renderer/screens/main/components/PRIcon";
-import { usePRStatus } from "renderer/screens/main/hooks";
+import { useCreateOrOpenPR, usePRStatus } from "renderer/screens/main/hooks";
 
 interface PRButtonProps {
 	workspaceId?: string;
@@ -38,13 +38,15 @@ export function PRButton({
 		onError: (error) => toast.error(`Merge failed: ${error.message}`),
 	});
 
-	const createPRMutation = electronTrpc.changes.createPR.useMutation({
-		onSuccess: () => {
-			toast.success("Opening GitHub...");
-			onRefresh();
-		},
-		onError: (error) => toast.error(`Failed: ${error.message}`),
-	});
+	const { createOrOpenPR, isPending: isCreateOrOpenPRPending } =
+		useCreateOrOpenPR({
+			worktreePath,
+			onSuccess: onRefresh,
+		});
+
+	const isCreatePending = isCreateOrOpenPRPending;
+
+	const handleCreatePR = () => createOrOpenPR();
 
 	const handleMergePR = (strategy: "merge" | "squash" | "rebase") =>
 		mergePRMutation.mutate({ worktreePath, strategy });
@@ -62,10 +64,10 @@ export function PRButton({
 					<button
 						type="button"
 						className="flex items-center ml-auto hover:opacity-80 transition-opacity disabled:opacity-50"
-						onClick={() => createPRMutation.mutate({ worktreePath })}
-						disabled={createPRMutation.isPending}
+						onClick={handleCreatePR}
+						disabled={isCreatePending}
 					>
-						{createPRMutation.isPending ? (
+						{isCreatePending ? (
 							<LuLoaderCircle className="w-4 h-4 animate-spin text-muted-foreground" />
 						) : (
 							<LuGitPullRequest className="w-4 h-4 text-muted-foreground" />

@@ -21,6 +21,7 @@ import {
 	HiChevronDown,
 } from "react-icons/hi2";
 import { electronTrpc } from "renderer/lib/electron-trpc";
+import { useCreateOrOpenPR } from "renderer/screens/main/hooks";
 
 interface CommitInputProps {
 	worktreePath: string;
@@ -79,13 +80,11 @@ export function CommitInput({
 		onError: (error) => toast.error(`Sync failed: ${error.message}`),
 	});
 
-	const createPRMutation = electronTrpc.changes.createPR.useMutation({
-		onSuccess: () => {
-			toast.success("Opening GitHub...");
-			onRefresh();
-		},
-		onError: (error) => toast.error(`Failed: ${error.message}`),
-	});
+	const { createOrOpenPR, isPending: isCreateOrOpenPRPending } =
+		useCreateOrOpenPR({
+			worktreePath,
+			onSuccess: onRefresh,
+		});
 
 	const fetchMutation = electronTrpc.changes.fetch.useMutation({
 		onSuccess: () => {
@@ -100,7 +99,7 @@ export function CommitInput({
 		pushMutation.isPending ||
 		pullMutation.isPending ||
 		syncMutation.isPending ||
-		createPRMutation.isPending ||
+		isCreateOrOpenPRPending ||
 		fetchMutation.isPending;
 
 	const canCommit = hasStagedChanges && commitMessage.trim();
@@ -116,8 +115,8 @@ export function CommitInput({
 			{ worktreePath, setUpstream: true },
 			{
 				onSuccess: () => {
-					if (isPublishing) {
-						createPRMutation.mutate({ worktreePath });
+					if (isPublishing && !hasExistingPR) {
+						createOrOpenPR();
 					}
 				},
 			},
@@ -132,7 +131,7 @@ export function CommitInput({
 			{ onSuccess: () => pullMutation.mutate({ worktreePath }) },
 		);
 	};
-	const handleCreatePR = () => createPRMutation.mutate({ worktreePath });
+	const handleCreatePR = () => createOrOpenPR();
 	const handleOpenPR = () => prUrl && window.open(prUrl, "_blank");
 
 	const handleCommitAndPush = () => {
@@ -197,6 +196,16 @@ export function CommitInput({
 				handler: handlePull,
 				disabled: isPending,
 				tooltip: `Pull ${pullCount} commit${pullCount !== 1 ? "s" : ""}`,
+			};
+		}
+		if (hasExistingPR) {
+			return {
+				action: "open-pr",
+				label: "Open PR",
+				icon: <HiArrowTopRightOnSquare className="size-4" />,
+				handler: handleOpenPR,
+				disabled: isPending || !prUrl,
+				tooltip: "Open existing pull request",
 			};
 		}
 		if (!hasUpstream) {
@@ -311,7 +320,7 @@ export function CommitInput({
 						>
 							<HiArrowUp className="size-3.5" />
 							<span className="flex-1">
-								{hasUpstream ? "Push" : "Publish Branch"}
+								{hasUpstream || hasExistingPR ? "Push" : "Publish Branch"}
 							</span>
 							{pushCount > 0 && (
 								<span className="text-[10px] text-muted-foreground">
