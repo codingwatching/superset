@@ -24,6 +24,7 @@ import type { ChatMastraRawSnapshot } from "./ChatMastraInterface/types";
 import { SessionSelector } from "./components/SessionSelector";
 import { createChatMastraServiceIpcClient } from "./utils/chat-mastra-service-client";
 import { reportChatMastraError } from "./utils/reportChatMastraError";
+import { createSessionInitRunner } from "./utils/session-init-runner";
 
 const apiUrl = env.NEXT_PUBLIC_API_URL;
 const mastraIpcClient = createChatMastraServiceIpcClient();
@@ -234,35 +235,68 @@ export function ChatMastraPane({
 		sessionId && sessions.some((item) => item.id === sessionId),
 	);
 	const [isSessionInitializing, setIsSessionInitializing] = useState(false);
-	const sessionInitRetryCountRef = useRef(0);
-	const sessionInitRetryTimeoutRef = useRef<ReturnType<
-		typeof setTimeout
-	> | null>(null);
-	const sessionInitInFlightRef = useRef<Promise<boolean> | null>(null);
+	const hasCurrentSessionRecordRef = useRef(hasCurrentSessionRecord);
 	const sessionInitScopeRef = useRef<string | null>(null);
+	const sessionInitRunnerRef = useRef<ReturnType<
+		typeof createSessionInitRunner
+	> | null>(null);
 
-	const clearSessionInitRetryTimeout = useCallback(() => {
-		if (sessionInitRetryTimeoutRef.current) {
-			clearTimeout(sessionInitRetryTimeoutRef.current);
-			sessionInitRetryTimeoutRef.current = null;
-		}
-	}, []);
+	useEffect(() => {
+		hasCurrentSessionRecordRef.current = hasCurrentSessionRecord;
+	}, [hasCurrentSessionRecord]);
+
+	if (!sessionInitRunnerRef.current) {
+		sessionInitRunnerRef.current = createSessionInitRunner({
+			maxRetries: SESSION_INIT_MAX_RETRIES,
+			retryDelayMs: SESSION_INIT_RETRY_DELAY_MS,
+			hasCurrentSessionRecord: () => hasCurrentSessionRecordRef.current,
+			isScopeCurrent: (scopeKey) => sessionInitScopeRef.current === scopeKey,
+			setIsSessionInitializing,
+			createSessionRecord: async (scope) => {
+				await createSessionRecord({
+					sessionId: scope.sessionId,
+					organizationId: scope.organizationId,
+					workspaceId: scope.workspaceId,
+				});
+			},
+			reportCreateSessionError: (error, scope) => {
+				reportChatMastraError({
+					operation: "session.create",
+					error,
+					sessionId: scope.sessionId,
+					workspaceId: scope.workspaceId,
+					paneId,
+					organizationId: scope.organizationId,
+				});
+			},
+			onRetryExhausted: () => {
+				toast.error("Failed to initialize chat session");
+			},
+		});
+	}
 
 	useEffect(() => {
 		return () => {
-			clearSessionInitRetryTimeout();
+			sessionInitRunnerRef.current?.dispose();
 		};
-	}, [clearSessionInitRetryTimeout]);
+	}, []);
 
 	useEffect(() => {
 		const scope = `${organizationId ?? "none"}:${workspaceId}:${sessionId ?? "none"}`;
 		if (sessionInitScopeRef.current === scope) return;
 		sessionInitScopeRef.current = scope;
-		sessionInitRetryCountRef.current = 0;
-		sessionInitInFlightRef.current = null;
-		setIsSessionInitializing(false);
-		clearSessionInitRetryTimeout();
-	}, [clearSessionInitRetryTimeout, organizationId, sessionId, workspaceId]);
+		sessionInitRunnerRef.current?.resetScope(scope);
+	}, [organizationId, sessionId, workspaceId]);
+
+	const currentSessionInitScope = useMemo(() => {
+		if (!sessionId || !organizationId) return null;
+		return {
+			scopeKey: `${organizationId}:${workspaceId}:${sessionId}`,
+			organizationId,
+			workspaceId,
+			sessionId,
+		};
+	}, [organizationId, sessionId, workspaceId]);
 
 	const handleSelectSession = useCallback(
 		(nextSessionId: string) => {
@@ -375,99 +409,29 @@ export function ChatMastraPane({
 		}: {
 			retryOnFailure: boolean;
 		}): Promise<boolean> => {
-			if (!sessionId || !organizationId) return false;
-			if (hasCurrentSessionRecord) {
-				sessionInitRetryCountRef.current = 0;
-				sessionInitInFlightRef.current = null;
-				clearSessionInitRetryTimeout();
-				setIsSessionInitializing(false);
-				return true;
-			}
-
-			const scopeKey = `${organizationId}:${workspaceId}:${sessionId}`;
-			const existingInFlight = sessionInitInFlightRef.current;
-			if (existingInFlight) return existingInFlight;
-
-			setIsSessionInitializing(true);
-
-			const attemptPromise = createSessionRecord({
-				sessionId,
-				organizationId,
-				workspaceId,
-			})
-				.then(() => {
-					if (sessionInitScopeRef.current !== scopeKey) return false;
-					sessionInitRetryCountRef.current = 0;
-					clearSessionInitRetryTimeout();
-					setIsSessionInitializing(false);
-					return true;
-				})
-				.catch((error) => {
-					reportChatMastraError({
-						operation: "session.create",
-						error,
-						sessionId,
-						workspaceId,
-						paneId,
-						organizationId,
-					});
-					if (sessionInitScopeRef.current !== scopeKey) return false;
-
-					if (retryOnFailure) {
-						const nextRetry = sessionInitRetryCountRef.current + 1;
-						sessionInitRetryCountRef.current = nextRetry;
-						if (nextRetry <= SESSION_INIT_MAX_RETRIES) {
-							clearSessionInitRetryTimeout();
-							sessionInitRetryTimeoutRef.current = setTimeout(() => {
-								sessionInitRetryTimeoutRef.current = null;
-								if (sessionInitScopeRef.current !== scopeKey) return;
-								void runSessionInit({ retryOnFailure: true });
-							}, SESSION_INIT_RETRY_DELAY_MS);
-							return false;
-						}
-						toast.error("Failed to initialize chat session");
-					}
-
-					setIsSessionInitializing(false);
-					return false;
-				})
-				.finally(() => {
-					if (sessionInitScopeRef.current !== scopeKey) return;
-					if (sessionInitInFlightRef.current !== attemptPromise) return;
-					sessionInitInFlightRef.current = null;
-				});
-
-			sessionInitInFlightRef.current = attemptPromise;
-			return attemptPromise;
+			if (!currentSessionInitScope) return false;
+			const runner = sessionInitRunnerRef.current;
+			if (!runner) return false;
+			return runner.run({ scope: currentSessionInitScope, retryOnFailure });
 		},
-		[
-			clearSessionInitRetryTimeout,
-			hasCurrentSessionRecord,
-			organizationId,
-			paneId,
-			sessionId,
-			workspaceId,
-		],
+		[currentSessionInitScope],
 	);
 
 	const ensureCurrentSessionRecord = useCallback(async (): Promise<boolean> => {
-		if (!sessionId || !organizationId) return false;
 		return runSessionInit({ retryOnFailure: false });
-	}, [organizationId, runSessionInit, sessionId]);
+	}, [runSessionInit]);
 
 	useEffect(() => {
+		if (!currentSessionInitScope) return;
 		if (!hasCurrentSessionRecord) return;
-		sessionInitRetryCountRef.current = 0;
-		sessionInitInFlightRef.current = null;
-		clearSessionInitRetryTimeout();
-		setIsSessionInitializing(false);
-	}, [clearSessionInitRetryTimeout, hasCurrentSessionRecord]);
+		sessionInitRunnerRef.current?.markReady(currentSessionInitScope.scopeKey);
+	}, [currentSessionInitScope, hasCurrentSessionRecord]);
 
 	useEffect(() => {
-		if (!sessionId || !organizationId) return;
+		if (!currentSessionInitScope) return;
 		if (hasCurrentSessionRecord) return;
 		void runSessionInit({ retryOnFailure: true });
-	}, [hasCurrentSessionRecord, organizationId, runSessionInit, sessionId]);
+	}, [currentSessionInitScope, hasCurrentSessionRecord, runSessionInit]);
 
 	useEffect(() => {
 		// Legacy fallback for panes created before session IDs were seeded at pane creation.
